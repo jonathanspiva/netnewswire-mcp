@@ -41,13 +41,13 @@ public enum ToolHandlers {
                 return try handleGetArticleCount(args: args, database: database)
             default:
                 return CallTool.Result(
-                    content: [.text("Unknown tool: \(name)")],
+                    content: [.text(text: "Unknown tool: \(name)", annotations: nil, _meta: nil)],
                     isError: true
                 )
             }
         } catch {
             return CallTool.Result(
-                content: [.text("Error: \(error)")],
+                content: [.text(text: "Error: \(error)", annotations: nil, _meta: nil)],
                 isError: true
             )
         }
@@ -60,5 +60,26 @@ public enum ToolHandlers {
             throw NNWError.missingParameter(key)
         }
         return value
+    }
+
+    /// Largest number of rows any query will return.
+    static let maxLimit = 500
+
+    /// Read an optional integer argument, accepting JSON numbers that arrive as
+    /// either integers or integral doubles (e.g. `50` or `50.0`).
+    static func optionalInt(_ args: [String: Value], key: String) -> Int? {
+        guard let value = args[key] else { return nil }
+        if let i = value.intValue { return i }
+        if let d = value.doubleValue, d == d.rounded() { return Int(d) }
+        return nil
+    }
+
+    /// Resolve and clamp a `limit` argument into `1...maxLimit`, falling back to
+    /// `defaultValue` when absent or non-numeric. Prevents a negative limit
+    /// (which SQLite treats as "no limit") or a huge value from dumping the
+    /// entire table into a response.
+    static func resolveLimit(_ args: [String: Value], default defaultValue: Int) -> Int {
+        let raw = optionalInt(args, key: "limit") ?? defaultValue
+        return min(max(raw, 1), maxLimit)
     }
 }

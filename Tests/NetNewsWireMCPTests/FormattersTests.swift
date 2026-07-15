@@ -17,7 +17,8 @@ func makeArticle(
     datePublished: Double? = 1700000000,
     starred: Bool = false,
     read: Bool = true,
-    dateArrived: Double = 1700000000
+    dateArrived: Double = 1700000000,
+    authors: String? = nil
 ) -> ArticleWithStatus {
     ArticleWithStatus(
         articleID: id,
@@ -34,6 +35,8 @@ func makeArticle(
         datePublished: datePublished,
         dateModified: nil,
         searchRowID: nil,
+        markdown: nil,
+        authors: authors,
         read: read,
         starred: starred,
         dateArrived: dateArrived
@@ -270,20 +273,6 @@ func makeArticle(
     #expect(result == "abc-123")
 }
 
-@Test(
-    .enabled(if: FileManager.default.fileExists(
-        atPath: "\(FileManager.default.homeDirectoryForCurrentUser.path)/Library/Containers/com.ranchero.NetNewsWire-Evergreen/Data/Library/Application Support/NetNewsWire/Accounts"
-    ))
-)
-func testHandleCallUnknownTool() throws {
-    let db = try NNWDatabase()
-    let result = ToolHandlers.handleCall(name: "nonexistent_tool", arguments: nil, database: db)
-    #expect(result.isError == true)
-    if case .text(let text) = result.content.first {
-        #expect(text.contains("Unknown tool"))
-    }
-}
-
 // MARK: - OPMLParser Tests
 
 @Test func testOPMLParserBasic() {
@@ -315,6 +304,68 @@ func testHandleCallUnknownTool() throws {
 
     #expect(feeds[2].title == "No Folder Feed")
     #expect(feeds[2].xmlUrl == "https://example.com/feed.xml")
+    // A top-level feed after a folder closes must NOT inherit the folder.
+    #expect(feeds[2].folder == nil)
+}
+
+@Test func testOPMLParserSiblingFolders() {
+    let opml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <opml version="2.0">
+        <body>
+            <outline text="Tech" title="Tech">
+                <outline type="rss" title="Daring Fireball" xmlUrl="https://df.net/feed"/>
+            </outline>
+            <outline text="News" title="News">
+                <outline type="rss" title="AP" xmlUrl="https://ap.org/feed"/>
+            </outline>
+        </body>
+        </opml>
+        """
+    let feeds = OPMLParser(data: Data(opml.utf8)).parse()
+    #expect(feeds.count == 2)
+    #expect(feeds[0].folder == "Tech")
+    #expect(feeds[1].folder == "News")
+}
+
+@Test func testOPMLParserNestedFolders() {
+    let opml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <opml version="2.0">
+        <body>
+            <outline text="Outer" title="Outer">
+                <outline text="Inner" title="Inner">
+                    <outline type="rss" title="Deep Feed" xmlUrl="https://deep.example.com/feed"/>
+                </outline>
+                <outline type="rss" title="Outer Feed" xmlUrl="https://outer.example.com/feed"/>
+            </outline>
+        </body>
+        </opml>
+        """
+    let feeds = OPMLParser(data: Data(opml.utf8)).parse()
+    #expect(feeds.count == 2)
+    // Nearest enclosing folder wins.
+    #expect(feeds[0].folder == "Inner")
+    // After the nested folder closes, its parent folder is restored.
+    #expect(feeds[1].folder == "Outer")
+}
+
+@Test func testOPMLParserFeedBeforeFolder() {
+    let opml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <opml version="2.0">
+        <body>
+            <outline type="rss" title="Loose Feed" xmlUrl="https://loose.example.com/feed"/>
+            <outline text="Tech" title="Tech">
+                <outline type="rss" title="Folded" xmlUrl="https://folded.example.com/feed"/>
+            </outline>
+        </body>
+        </opml>
+        """
+    let feeds = OPMLParser(data: Data(opml.utf8)).parse()
+    #expect(feeds.count == 2)
+    #expect(feeds[0].folder == nil)
+    #expect(feeds[1].folder == "Tech")
 }
 
 @Test func testOPMLParserEmptyBody() {

@@ -3,30 +3,6 @@ import GRDB
 
 // MARK: - Database Records
 
-public struct Article: Codable, FetchableRecord, Sendable {
-    public let articleID: String
-    public let feedID: String
-    public let uniqueID: String
-    public let title: String?
-    public let contentHTML: String?
-    public let contentText: String?
-    public let url: String?
-    public let externalURL: String?
-    public let summary: String?
-    public let imageURL: String?
-    public let bannerImageURL: String?
-    public let datePublished: Double?
-    public let dateModified: Double?
-    public let searchRowID: Int?
-}
-
-public struct ArticleStatus: Codable, FetchableRecord, Sendable {
-    public let articleID: String
-    public let read: Bool
-    public let starred: Bool
-    public let dateArrived: Double
-}
-
 public struct Author: Codable, FetchableRecord, Sendable {
     public let authorID: String
     public let name: String?
@@ -50,6 +26,11 @@ public struct ArticleWithStatus: Codable, FetchableRecord, Sendable {
     public let datePublished: Double?
     public let dateModified: Double?
     public let searchRowID: Int?
+    /// Markdown rendering of the article body (NNW 7.1+). Not currently surfaced.
+    public let markdown: String?
+    /// Authors as a JSON array string, stored inline on the article
+    /// (NNW 7.1+ replaced the separate `authors`/`authorsLookup` tables).
+    public let authors: String?
     public let read: Bool
     public let starred: Bool
     public let dateArrived: Double
@@ -79,9 +60,16 @@ public final class NNWDatabase: Sendable {
     private let accountsBasePath: String
     private let accounts: [NNWAccount]
 
-    public init() throws {
+    /// Default accounts directory for the current user's NetNewsWire install.
+    public static func defaultAccountsBasePath() -> String {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let basePath = "\(home)/Library/Containers/com.ranchero.NetNewsWire-Evergreen/Data/Library/Application Support/NetNewsWire/Accounts"
+        return "\(home)/Library/Containers/com.ranchero.NetNewsWire-Evergreen/Data/Library/Application Support/NetNewsWire/Accounts"
+    }
+
+    /// - Parameter accountsBasePath: Override the accounts directory (used for testing).
+    ///   Defaults to the real NetNewsWire container path.
+    public init(accountsBasePath: String? = nil) throws {
+        let basePath = accountsBasePath ?? Self.defaultAccountsBasePath()
         self.accountsBasePath = basePath
 
         guard FileManager.default.fileExists(atPath: basePath) else {
@@ -199,16 +187,15 @@ public final class NNWDatabase: Sendable {
                 throw NNWError.articleNotFound(articleID)
             }
 
-            let authorSql = """
-                SELECT au.*
-                FROM authors au
-                JOIN authorsLookup al ON au.authorID = al.authorID
-                WHERE al.articleID = ?
-                """
-            let authors = try Author.fetchAll(db, sql: authorSql, arguments: [articleID])
-
-            return (article, authors)
+            return (article, Self.parseAuthors(article.authors))
         }
+    }
+
+    /// Decode the inline `articles.authors` JSON array (NNW 7.1+). Returns an
+    /// empty list for missing or malformed JSON.
+    static func parseAuthors(_ json: String?) -> [Author] {
+        guard let json, !json.isEmpty, let data = json.data(using: .utf8) else { return [] }
+        return (try? JSONDecoder().decode([Author].self, from: data)) ?? []
     }
 
     public func searchArticles(account: NNWAccount, query: String, limit: Int = 50) throws -> [ArticleWithStatus] {
@@ -288,7 +275,13 @@ public enum NNWError: Error, LocalizedError, CustomStringConvertible {
 final class OPMLParser: NSObject, XMLParserDelegate {
     private let data: Data
     private var feeds: [FeedInfo] = []
-    private var currentFolder: String?
+
+    /// One entry is pushed for every `<outline>` element as it opens and popped
+    /// when it closes. Feed outlines push `nil` (they contribute no folder);
+    /// container outlines push their title. The current folder is the nearest
+    /// enclosing non-nil entry, so folder context is correctly scoped even for
+    /// sibling folders, nested folders, and top-level feeds after a folder closes.
+    private var outlineStack: [String?] = []
 
     init(data: Data) {
         self.data = data
@@ -299,6 +292,10 @@ final class OPMLParser: NSObject, XMLParserDelegate {
         parser.delegate = self
         parser.parse()
         return feeds
+    }
+
+    private var currentFolder: String? {
+        outlineStack.last(where: { $0 != nil }) ?? nil
     }
 
     func parser(
@@ -318,8 +315,9 @@ final class OPMLParser: NSObject, XMLParserDelegate {
                 folder: currentFolder
             )
             feeds.append(feed)
-        } else if let title = attributeDict["title"] ?? attributeDict["text"] {
-            currentFolder = title
+            outlineStack.append(nil)
+        } else {
+            outlineStack.append(attributeDict["title"] ?? attributeDict["text"])
         }
     }
 
@@ -329,7 +327,7 @@ final class OPMLParser: NSObject, XMLParserDelegate {
         namespaceURI: String?,
         qualifiedName qName: String?
     ) {
-        // Folder outlines close, but we keep the folder context
-        // until the next folder opens (simplified, works for NNW's flat structure)
+        guard elementName == "outline", !outlineStack.isEmpty else { return }
+        outlineStack.removeLast()
     }
 }

@@ -10,7 +10,7 @@ let package = Package(
         .executable(name: "netnewswire-mcp", targets: ["netnewswire-mcp"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/modelcontextprotocol/swift-sdk", from: "0.10.0"),
+        .package(url: "https://github.com/modelcontextprotocol/swift-sdk", from: "0.12.1"),
         .package(url: "https://github.com/groue/GRDB.swift", from: "7.0.0"),
     ],
     targets: [
@@ -32,6 +32,7 @@ let package = Package(
             dependencies: [
                 "NetNewsWireMCPLib",
                 .product(name: "MCP", package: "swift-sdk"),
+                .product(name: "GRDB", package: "GRDB.swift"),
             ]
         ),
     ]
