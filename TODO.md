@@ -3,6 +3,8 @@
 ## Now
 
 ## Later
+- [ ] Expose feeds/articles as MCP Resources (addressable by URI) in addition to tools
+- [ ] Cursor-based pagination for the list tools (large accounts)
 
 ## Never
 
@@ -10,7 +12,18 @@
 - [x] Fix OPML folder tracking (folder context now scoped via an outline stack:
       cleared on `didEndElement`, so sibling folders, nested folders, and
       top-level feeds after a folder are labeled correctly)
-- [x] Add integration tests for the DB query layer (fixture DB matching NNW's
-      schema) plus OPML edge cases, limit clamping, and account resolution
+- [x] Read authors from the inline `articles.authors` JSON column (NetNewsWire 7.1
+      removed the `authors`/`authorsLookup` tables; `get_article` was broken on
+      real data before this)
+- [x] Build against the Swift 6.3 toolchain (bumped swift-sdk to 0.12.1, adopted
+      the new `Content.text` API)
 - [x] Clamp `limit` arguments (reject negative/zero/oversized values)
-- [x] Build against Swift 6.3 toolchain (bumped swift-sdk to 0.12.1)
+- [x] MCP best practices: register handlers before `start()`, add server
+      `instructions`, return `structuredContent` + `outputSchema`, add tool
+      titles, bound `get_article` output (`format` / `max_content_length`),
+      sanitize error messages, cache one read-only pool per account with a busy timeout
+- [x] Escape markdown table cells fully (pipes + newlines, URL columns)
+- [x] Test suite: 98 tests — DB query layer against a fixture DB matching the
+      live 7.1.1 schema, OPML edge cases, limit/content-length clamping, account
+      resolution, structured output, content selection/truncation, author-JSON
+      parsing, handler routing/errors, plus a gated live-DB validation test

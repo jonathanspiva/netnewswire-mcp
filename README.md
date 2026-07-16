@@ -18,17 +18,19 @@ Gives AI assistants like Claude access to your NetNewsWire feeds, articles, and 
 | `list_feeds` | List subscribed feeds (parsed from OPML) |
 | `list_starred_articles` | Starred articles with optional feed filter and limit |
 | `list_recent_articles` | Recent articles by arrival date |
-| `get_article` | Full article content (HTML/text, authors, dates) by ID |
+| `get_article` | Full article content by ID; optional `format` (html/text) and `max_content_length` to bound the body |
 | `search_articles` | Full-text search using NNW's FTS4 index |
 | `get_article_count` | Total, starred, and unread counts |
 
-All tools are read-only. Nothing is modified.
+All tools are read-only. Nothing is modified. Each tool returns machine-readable
+`structuredContent` (with a declared `outputSchema`) alongside the human-readable
+markdown.
 
 ## Requirements
 
 - macOS 26+
-- Swift 6.2+
-- NetNewsWire (Mac App Store or direct download)
+- Swift 6.2+ (builds on the Swift 6.3 toolchain in Xcode 26)
+- NetNewsWire (Mac App Store or direct download); tested against 7.1.1
 
 ## Build
 
@@ -52,6 +54,25 @@ Add to your Claude Code MCP config (`~/.claude/claude_desktop_config.json` or si
 }
 ```
 
+Or, with the Claude Code CLI:
+
+```bash
+claude mcp add netnewswire /path/to/.build/release/netnewswire-mcp
+```
+
+## Full Disk Access
+
+NetNewsWire keeps its databases inside a macOS app container, which the system
+protects with privacy controls (TCC). The server can only read it if the process
+that launches it has **Full Disk Access** — otherwise it exits at startup with
+`Operation not permitted`.
+
+Grant FDA to whichever app hosts your MCP client, then restart that app:
+
+- Running Claude Code from a terminal → System Settings → Privacy & Security →
+  Full Disk Access → enable **Terminal** (or iTerm).
+- Another host (VS Code, the Claude desktop app) → grant FDA to that app instead.
+
 ## How it works
 
 The server reads NetNewsWire's SQLite databases directly (read-only mode) from:
@@ -64,13 +85,13 @@ It auto-discovers all accounts and their databases on startup. Feed lists are pa
 
 ## Dependencies
 
-- [swift-sdk](https://github.com/modelcontextprotocol/swift-sdk) - MCP protocol implementation for Swift
-- [GRDB.swift](https://github.com/groue/GRDB.swift) - SQLite toolkit for Swift
+- [swift-sdk](https://github.com/modelcontextprotocol/swift-sdk) 0.12.1+ - MCP protocol implementation for Swift
+- [GRDB.swift](https://github.com/groue/GRDB.swift) 7.x - SQLite toolkit for Swift
 
 ## Notes
 
 - Only tested with [Claude Code](https://docs.anthropic.com/en/docs/claude-code). It should work with any MCP client, but your mileage may vary.
-- This depends on NetNewsWire's internal database schema, which is not a public API and could change between versions.
+- This depends on NetNewsWire's internal database schema, which is not a public API and could change between versions. NetNewsWire 7.1 moved authors into an inline JSON column on `articles` (the old `authors`/`authorsLookup` tables are gone); this server reads the current layout.
 - Feed IDs are the XML URLs of the feeds, not UUIDs.
 - Dates are Unix timestamps (seconds since 1970).
 

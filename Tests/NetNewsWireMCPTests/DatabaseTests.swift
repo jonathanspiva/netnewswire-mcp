@@ -428,7 +428,8 @@ private func withFixture(_ body: (Fixture, NNWDatabase) throws -> Void) throws {
 // MARK: - Author JSON Parsing (NNW 7.1+ inline authors column)
 
 @Test func testParseAuthorsRealShape() {
-    // Exact shape observed in a live NNW 7.1.1 database (escaped slashes, no avatarURL).
+    // Mirrors the JSON shape NetNewsWire 7.1 writes to `articles.authors`
+    // (escaped slashes, an emailAddress, no avatarURL). Values are fictional.
     let json = #"[{"authorID":"a1b2c3d4","name":"Ada Lovelace","url":"https:\/\/example.com","emailAddress":"ada@example.com"}]"#
     let authors = NNWDatabase.parseAuthors(json)
     #expect(authors.count == 1)
