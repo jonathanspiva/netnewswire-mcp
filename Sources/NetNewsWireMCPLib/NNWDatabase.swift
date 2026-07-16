@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import Synchronization
 
 // MARK: - Database Records
 
@@ -59,6 +60,10 @@ public struct FeedInfo: Sendable {
 public final class NNWDatabase: Sendable {
     private let accountsBasePath: String
     private let accounts: [NNWAccount]
+
+    /// One read-only connection pool per account database, opened lazily and
+    /// reused across tool calls (avoids re-opening WAL connections per query).
+    private let poolCache = Mutex<[String: DatabasePool]>([:])
 
     /// Default accounts directory for the current user's NetNewsWire install.
     public static func defaultAccountsBasePath() -> String {
@@ -122,9 +127,19 @@ public final class NNWDatabase: Sendable {
     // MARK: - Database Connection
 
     private func openDatabase(for account: NNWAccount) throws -> DatabasePool {
-        var config = Configuration()
-        config.readonly = true
-        return try DatabasePool(path: account.dbPath, configuration: config)
+        try poolCache.withLock { cache in
+            if let pool = cache[account.dbPath] {
+                return pool
+            }
+            var config = Configuration()
+            config.readonly = true
+            // NetNewsWire may be mid-write; wait briefly instead of failing
+            // immediately with SQLITE_BUSY.
+            config.busyMode = .timeout(1.0)
+            let pool = try DatabasePool(path: account.dbPath, configuration: config)
+            cache[account.dbPath] = pool
+            return pool
+        }
     }
 
     // MARK: - Article Queries

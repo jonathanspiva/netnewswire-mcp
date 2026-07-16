@@ -40,16 +40,33 @@ public enum ToolHandlers {
             case "get_article_count":
                 return try handleGetArticleCount(args: args, database: database)
             default:
-                return CallTool.Result(
-                    content: [.text(text: "Unknown tool: \(name)", annotations: nil, _meta: nil)],
-                    isError: true
-                )
+                return errorResult("Unknown tool: \(name)")
             }
+        } catch let error as NNWError {
+            // NNWError messages are already user-facing and safe.
+            return errorResult(error.description)
         } catch {
-            return CallTool.Result(
-                content: [.text(text: "Error: \(error)", annotations: nil, _meta: nil)],
-                isError: true
-            )
+            // Log the raw error (e.g. a GRDB error carrying the DB file path) to
+            // stderr; return a friendly message so internals don't leak to the client.
+            log("Tool '\(name)' failed: \(error)")
+            return errorResult(friendlyMessage(for: name))
+        }
+    }
+
+    private static func errorResult(_ message: String) -> CallTool.Result {
+        CallTool.Result(
+            content: [.text(text: message, annotations: nil, _meta: nil)],
+            isError: true
+        )
+    }
+
+    /// Non-leaking, actionable message for an unexpected (non-NNWError) failure.
+    private static func friendlyMessage(for tool: String) -> String {
+        switch tool {
+        case "search_articles":
+            return "Search failed. Check the query syntax (FTS4: words, \"quoted phrases\", OR, NOT) and try again."
+        default:
+            return "The '\(tool)' request could not be completed. The NetNewsWire database may be unavailable or in an unexpected state."
         }
     }
 
@@ -81,5 +98,17 @@ public enum ToolHandlers {
     static func resolveLimit(_ args: [String: Value], default defaultValue: Int) -> Int {
         let raw = optionalInt(args, key: "limit") ?? defaultValue
         return min(max(raw, 1), maxLimit)
+    }
+
+    /// Default and maximum article-body length returned by `get_article`.
+    static let defaultContentLength = 50_000
+    static let maxContentLength = 200_000
+
+    /// Resolve and clamp the `max_content_length` argument into
+    /// `100...maxContentLength`, so `get_article` can't return an unbounded body
+    /// (which would flood the client's context window).
+    static func resolveContentLength(_ args: [String: Value]) -> Int {
+        let raw = optionalInt(args, key: "max_content_length") ?? defaultContentLength
+        return min(max(raw, 100), maxContentLength)
     }
 }

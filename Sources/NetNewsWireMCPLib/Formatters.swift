@@ -64,8 +64,16 @@ public enum Formatters {
         return lines.joined(separator: "\n")
     }
 
-    /// Format a single article with full details
-    public static func formatArticleDetail(_ article: ArticleWithStatus, authors: [Author]) -> String {
+    /// Format a single article with full details.
+    /// - Parameters:
+    ///   - preferText: prefer the plain-text body over HTML when both exist.
+    ///   - maxContentLength: truncate the body to this many characters.
+    public static func formatArticleDetail(
+        _ article: ArticleWithStatus,
+        authors: [Author],
+        preferText: Bool = false,
+        maxContentLength: Int = 50000
+    ) -> String {
         var lines: [String] = ["# Article\n"]
         lines.append("- **ID**: `\(article.articleID)`")
         if let title = article.title {
@@ -95,12 +103,12 @@ public enum Formatters {
             lines.append(summary)
         }
 
-        if let html = article.contentHTML, !html.isEmpty {
-            lines.append("\n## Content (HTML)\n")
-            lines.append(html)
-        } else if let text = article.contentText, !text.isEmpty {
-            lines.append("\n## Content\n")
-            lines.append(text)
+        let (content, format, _) = StructuredOutput.selectContent(
+            article, preferText: preferText, maxLength: maxContentLength
+        )
+        if let content {
+            lines.append(format == "html" ? "\n## Content (HTML)\n" : "\n## Content\n")
+            lines.append(content)
         }
 
         return lines.joined(separator: "\n")

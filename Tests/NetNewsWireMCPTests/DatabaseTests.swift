@@ -454,6 +454,136 @@ private func withFixture(_ body: (Fixture, NNWDatabase) throws -> Void) throws {
     #expect(NNWDatabase.parseAuthors("{\"name\":\"x\"}").isEmpty)  // object, not array
 }
 
+// MARK: - Structured Output
+
+private func structuredObject(_ result: CallTool.Result) -> [String: Value]? {
+    guard case .object(let obj)? = result.structuredContent else { return nil }
+    return obj
+}
+
+@Test func testStructuredCountsOutput() throws {
+    try withFixture { _, db in
+        let result = ToolHandlers.handleCall(
+            name: "get_article_count",
+            arguments: ["account": .string("2_iCloud")],
+            database: db
+        )
+        let obj = structuredObject(result)
+        #expect(obj?["total"] == .int(3))
+        #expect(obj?["starred"] == .int(2))
+        #expect(obj?["unread"] == .int(1))
+        #expect(obj?["account"] == .string("2_iCloud"))
+    }
+}
+
+@Test func testStructuredAccountsOutput() throws {
+    try withFixture { _, db in
+        let result = ToolHandlers.handleCall(name: "list_accounts", arguments: nil, database: db)
+        let obj = structuredObject(result)
+        #expect(obj?["total"] == .int(2))
+        guard case .array(let accounts)? = obj?["accounts"] else {
+            Issue.record("expected accounts array")
+            return
+        }
+        #expect(accounts.count == 2)
+    }
+}
+
+@Test func testStructuredArticleListOutput() throws {
+    try withFixture { _, db in
+        let result = ToolHandlers.handleCall(
+            name: "search_articles",
+            arguments: ["query": .string("concurrency")],
+            database: db
+        )
+        let obj = structuredObject(result)
+        #expect(obj?["total"] == .int(1))
+        guard case .array(let articles)? = obj?["articles"],
+              case .object(let first)? = articles.first else {
+            Issue.record("expected articles array")
+            return
+        }
+        #expect(first["article_id"] == .string("a1"))
+        #expect(first["starred"] == .bool(true))
+    }
+}
+
+@Test func testStructuredArticleDetailOutput() throws {
+    try withFixture { _, db in
+        let result = ToolHandlers.handleCall(
+            name: "get_article",
+            arguments: ["account": .string("2_iCloud"), "article_id": .string("a1")],
+            database: db
+        )
+        let obj = structuredObject(result)
+        #expect(obj?["article_id"] == .string("a1"))
+        #expect(obj?["content_format"] == .string("html"))
+        #expect(obj?["content_truncated"] == .bool(false))
+        guard case .array(let authors)? = obj?["authors"] else {
+            Issue.record("expected authors array")
+            return
+        }
+        #expect(authors == [.string("Jane Developer")])
+    }
+}
+
+// MARK: - get_article content selection & truncation
+
+@Test func testSelectContentPrefersHTMLByDefault() {
+    let article = makeArticle(contentHTML: "<p>html</p>", contentText: "plain")
+    let (text, format, truncated) = StructuredOutput.selectContent(article, preferText: false, maxLength: 1000)
+    #expect(format == "html")
+    #expect(text == "<p>html</p>")
+    #expect(truncated == false)
+}
+
+@Test func testSelectContentPrefersTextWhenAsked() {
+    let article = makeArticle(contentHTML: "<p>html</p>", contentText: "plain")
+    let (text, format, _) = StructuredOutput.selectContent(article, preferText: true, maxLength: 1000)
+    #expect(format == "text")
+    #expect(text == "plain")
+}
+
+@Test func testSelectContentTruncates() {
+    let long = String(repeating: "x", count: 300)
+    let article = makeArticle(contentHTML: long)
+    let (text, _, truncated) = StructuredOutput.selectContent(article, preferText: false, maxLength: 100)
+    #expect(truncated == true)
+    #expect(text?.hasPrefix(String(repeating: "x", count: 100)) == true)
+    #expect(text?.contains("truncated") == true)
+    // Original 300 chars are not all present.
+    #expect((text?.count ?? 0) < 300 + 100)
+}
+
+@Test func testResolveContentLengthClamps() {
+    #expect(ToolHandlers.resolveContentLength([:]) == ToolHandlers.defaultContentLength)
+    #expect(ToolHandlers.resolveContentLength(["max_content_length": .int(10)]) == 100)
+    #expect(ToolHandlers.resolveContentLength(["max_content_length": .int(9_999_999)]) == ToolHandlers.maxContentLength)
+    #expect(ToolHandlers.resolveContentLength(["max_content_length": .int(1000)]) == 1000)
+}
+
+// MARK: - Error sanitization
+
+@Test func testMalformedSearchReturnsFriendlyError() throws {
+    try withFixture { _, db in
+        // "swift OR" is a malformed FTS4 MATCH expression (trailing operator).
+        let result = ToolHandlers.handleCall(
+            name: "search_articles",
+            arguments: ["query": .string("swift OR")],
+            database: db
+        )
+        #expect(result.isError == true)
+        if case .text(let message, _, _) = result.content.first {
+            #expect(message.contains("Search failed"))
+            // Internal details (DB path, raw SQLite error) must not leak.
+            #expect(!message.contains("DB.sqlite3"))
+            #expect(!message.lowercased().contains("/users"))
+        } else {
+            Issue.record("expected text content")
+        }
+    }
+}
+
 // MARK: - Live NetNewsWire Validation
 //
 // These run only when a real, *readable* NetNewsWire database is present. They
