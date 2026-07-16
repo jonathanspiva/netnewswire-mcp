@@ -395,3 +395,134 @@ func makeArticle(
     #expect(feeds.count == 1)
     #expect(feeds[0].title == "Text Title")
 }
+
+@Test func testOPMLParserTitleFallsBackToXmlUrl() {
+    // Neither title nor text attribute — title should be the feed URL.
+    let opml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <opml version="2.0"><body>
+            <outline type="rss" xmlUrl="https://example.com/feed.xml"/>
+        </body></opml>
+        """
+    let feeds = OPMLParser(data: Data(opml.utf8)).parse()
+    #expect(feeds.count == 1)
+    #expect(feeds[0].title == "https://example.com/feed.xml")
+}
+
+@Test func testOPMLParserThreeLevelNesting() {
+    let opml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <opml version="2.0"><body>
+            <outline title="A">
+                <outline title="B">
+                    <outline title="C">
+                        <outline type="rss" title="Deep" xmlUrl="https://deep.example.com/feed"/>
+                    </outline>
+                    <outline type="rss" title="MidB" xmlUrl="https://midb.example.com/feed"/>
+                </outline>
+            </outline>
+        </body></opml>
+        """
+    let feeds = OPMLParser(data: Data(opml.utf8)).parse()
+    #expect(feeds.count == 2)
+    #expect(feeds[0].folder == "C")   // nearest enclosing folder
+    #expect(feeds[1].folder == "B")   // C popped; back inside B
+}
+
+@Test func testOPMLParserMalformedXMLReturnsEmpty() {
+    let feeds = OPMLParser(data: Data("<opml><body><garbage".utf8)).parse()
+    #expect(feeds.isEmpty)  // no crash, no partial feeds
+}
+
+@Test func testOPMLParserIgnoresNonOutlineElements() {
+    let opml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <opml version="2.0">
+        <head><title>Subscriptions</title><ownerName>Someone</ownerName></head>
+        <body>
+            <outline type="rss" title="Only Feed" xmlUrl="https://only.example.com/feed"/>
+        </body></opml>
+        """
+    let feeds = OPMLParser(data: Data(opml.utf8)).parse()
+    #expect(feeds.count == 1)
+    #expect(feeds[0].title == "Only Feed")
+}
+
+// MARK: - Formatter robustness
+
+@Test func testEscapeTableCellStripsNewlines() {
+    #expect(Formatters.escapeTableCell("line1\nline2") == "line1 line2")
+    #expect(Formatters.escapeTableCell("a\r\nb") == "a b")
+    #expect(Formatters.escapeTableCell("pipe | and\nnewline") == "pipe \\| and newline")
+}
+
+@Test func testFormatArticleTableEscapesURLPipes() {
+    let article = makeArticle(url: "https://example.com/a?x=1|2")
+    let result = Formatters.formatArticleTable([article], title: "# Test\n")
+    #expect(result.contains("x=1\\|2"))
+}
+
+@Test func testFormatArticleTableTitleNewlineStaysOneRow() {
+    let article = makeArticle(title: "Multi\nLine Title")
+    let result = Formatters.formatArticleTable([article], title: "# Test\n")
+    // Body rows start with "| "; a newline in the title must not create a second one.
+    let bodyRows = result.split(separator: "\n").filter { $0.hasPrefix("| ") && !$0.contains("---") }
+    // Header row + exactly one data row.
+    #expect(bodyRows.count == 2)
+    #expect(result.contains("Multi Line Title"))
+}
+
+@Test func testFormatFeedTableEscapesURL() {
+    let feeds = [FeedInfo(title: "Weird", xmlUrl: "https://x.com/feed|raw", htmlUrl: nil, folder: nil)]
+    let result = Formatters.formatFeedTable(feeds)
+    #expect(result.contains("https://x.com/feed\\|raw"))
+}
+
+@Test func testTruncateAtExactBoundary() {
+    let s = String(repeating: "a", count: 10)
+    #expect(Formatters.truncate(s, maxLength: 10) == s)  // no ellipsis at the boundary
+}
+
+@Test func testShortDateNilAndZero() {
+    #expect(Formatters.shortDate(nil) == "-")
+    #expect(Formatters.shortDate(0) == "-")
+}
+
+@Test func testFormatArticleDetailOmitsExternalWhenEqualToURL() {
+    let article = makeArticle(url: "https://same.example.com", externalURL: "https://same.example.com")
+    let result = Formatters.formatArticleDetail(article, authors: [])
+    #expect(result.contains("**URL**"))
+    #expect(!result.contains("**External URL**"))
+}
+
+@Test func testFormatArticleDetailPreferTextHeader() {
+    let article = makeArticle(contentHTML: "<p>html body</p>", contentText: "plain body")
+    let result = Formatters.formatArticleDetail(article, authors: [], preferText: true)
+    #expect(result.contains("## Content\n"))
+    #expect(!result.contains("## Content (HTML)"))
+    #expect(result.contains("plain body"))
+}
+
+@Test func testFormatArticleDetailTruncationNote() {
+    let article = makeArticle(contentHTML: String(repeating: "a", count: 300))
+    let result = Formatters.formatArticleDetail(article, authors: [], maxContentLength: 100)
+    #expect(result.contains("truncated"))
+}
+
+// MARK: - Param helper edge cases
+
+@Test func testResolveLimitIgnoresStringValue() {
+    // A string "50" is not a JSON number; fall back to the default.
+    #expect(ToolHandlers.resolveLimit(["limit": .string("50")], default: 10) == 10)
+}
+
+@Test func testResolveContentLengthAcceptsIntegralDouble() {
+    #expect(ToolHandlers.resolveContentLength(["max_content_length": .double(1500)]) == 1500)
+}
+
+@Test func testResolveContentLengthIgnoresString() {
+    #expect(
+        ToolHandlers.resolveContentLength(["max_content_length": .string("1500")])
+            == ToolHandlers.defaultContentLength
+    )
+}

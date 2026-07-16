@@ -96,6 +96,7 @@ private struct Fixture {
                 db, id: "a1", feedID: "https://swift.org/feed.xml",
                 title: "Swift 6.3 Released",
                 contentHTML: "<p>Concurrency improvements land in Swift</p>",
+                contentText: "Plain-text concurrency notes",
                 url: "https://swift.org/blog/swift-6-3",
                 datePublished: T.a1, dateArrived: T.a1,
                 read: true, starred: true,
@@ -452,6 +453,116 @@ private func withFixture(_ body: (Fixture, NNWDatabase) throws -> Void) throws {
 @Test func testParseAuthorsMalformedIsSafe() {
     #expect(NNWDatabase.parseAuthors("not json").isEmpty)
     #expect(NNWDatabase.parseAuthors("{\"name\":\"x\"}").isEmpty)  // object, not array
+}
+
+@Test func testParseAuthorsEntryWithoutName() {
+    // authorID present, name absent → decodes with name == nil.
+    let authors = NNWDatabase.parseAuthors(#"[{"authorID":"abc"}]"#)
+    #expect(authors.count == 1)
+    #expect(authors.first?.name == nil)
+}
+
+@Test func testParseAuthorsFailsClosedOnMissingRequiredField() {
+    // authorID is non-optional; an entry lacking it fails the whole decode → [].
+    let authors = NNWDatabase.parseAuthors(#"[{"name":"No ID Here"}]"#)
+    #expect(authors.isEmpty)
+}
+
+// MARK: - Additional Query / Handler Coverage
+
+@Test func testStarredArticlesFeedFilterNoMatch() throws {
+    try withFixture { _, db in
+        let account = try db.resolveAccount("2_iCloud")
+        let starred = try db.starredArticles(account: account, feedID: "https://nope.example.com/feed")
+        #expect(starred.isEmpty)
+    }
+}
+
+@Test func testRecentArticlesRespectsLimitAndOrder() throws {
+    try withFixture { _, db in
+        let account = try db.resolveAccount("2_iCloud")
+        let recent = try db.recentArticles(account: account, limit: 2)
+        #expect(recent.map(\.articleID) == ["a3", "a2"])  // newest two by arrival
+    }
+}
+
+@Test func testSearchOrdersByDatePublished() throws {
+    try withFixture { _, db in
+        let account = try db.resolveAccount("2_iCloud")
+        // "Swift" matches a1 and a2; ordered by COALESCE(datePublished, dateArrived) DESC.
+        let results = try db.searchArticles(account: account, query: "Swift")
+        #expect(results.map(\.articleID) == ["a2", "a1"])
+    }
+}
+
+@Test func testHandleListFeedsRoutes() throws {
+    try withFixture { _, db in
+        let result = ToolHandlers.handleCall(
+            name: "list_feeds",
+            arguments: ["account": .string("2_iCloud")],
+            database: db
+        )
+        #expect(result.isError != true)
+        if case .text(let text, _, _) = result.content.first {
+            #expect(text.contains("Swift Blog"))
+            #expect(text.contains("Total: 2 feeds"))
+        } else {
+            Issue.record("expected text content")
+        }
+    }
+}
+
+@Test func testHandleGetArticleMissingIDReturnsError() throws {
+    try withFixture { _, db in
+        let result = ToolHandlers.handleCall(
+            name: "get_article",
+            arguments: ["account": .string("2_iCloud")],
+            database: db
+        )
+        #expect(result.isError == true)
+        if case .text(let text, _, _) = result.content.first {
+            #expect(text.contains("article_id"))
+        } else {
+            Issue.record("expected text content")
+        }
+    }
+}
+
+@Test func testHandleUnknownAccountReturnsError() throws {
+    try withFixture { _, db in
+        let result = ToolHandlers.handleCall(
+            name: "get_article_count",
+            arguments: ["account": .string("no-such-account")],
+            database: db
+        )
+        #expect(result.isError == true)
+        if case .text(let text, _, _) = result.content.first {
+            #expect(text.contains("no-such-account"))
+            #expect(text.contains("2_iCloud"))  // lists available accounts
+        } else {
+            Issue.record("expected text content")
+        }
+    }
+}
+
+@Test func testGetArticleFormatTextViaHandler() throws {
+    try withFixture { _, db in
+        let result = ToolHandlers.handleCall(
+            name: "get_article",
+            arguments: [
+                "account": .string("2_iCloud"),
+                "article_id": .string("a1"),
+                "format": .string("text"),
+            ],
+            database: db
+        )
+        guard case .object(let obj)? = result.structuredContent else {
+            Issue.record("expected structured content")
+            return
+        }
+        #expect(obj["content_format"] == .string("text"))
+        #expect(obj["content"] == .string("Plain-text concurrency notes"))
+    }
 }
 
 // MARK: - Structured Output

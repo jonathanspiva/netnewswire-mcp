@@ -29,9 +29,15 @@ public enum Formatters {
         return shortDateFormatter.string(from: date)
     }
 
-    /// Escape pipe characters for markdown table cells
+    /// Escape a value for a markdown table cell: escape pipes and collapse
+    /// newlines to spaces (a raw newline would split the row across lines).
     public static func escapeTableCell(_ value: String?) -> String {
-        (value ?? "-").replacingOccurrences(of: "|", with: "\\|")
+        guard let value else { return "-" }
+        return value
+            .replacingOccurrences(of: "|", with: "\\|")
+            .replacingOccurrences(of: "\r\n", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
     }
 
     /// Truncate a string to a max length
@@ -56,7 +62,7 @@ public enum Formatters {
                 let feedID = esc(truncate(article.feedID, maxLength: 40))
                 let date = shortDate(article.datePublished ?? article.dateArrived)
                 let starred = article.starred ? "Yes" : "No"
-                let url = article.url ?? article.externalURL ?? "-"
+                let url = esc(article.url ?? article.externalURL)
                 lines.append("| \(articleID) | \(articleTitle) | \(feedID) | \(date) | \(starred) | \(url) |")
             }
         }
@@ -126,7 +132,7 @@ public enum Formatters {
             for feed in feeds {
                 let title = esc(feed.title)
                 let folder = esc(feed.folder)
-                lines.append("| \(title) | \(folder) | \(feed.xmlUrl) |")
+                lines.append("| \(title) | \(folder) | \(esc(feed.xmlUrl)) |")
             }
         }
         lines.append("\nTotal: \(feeds.count) feeds")
